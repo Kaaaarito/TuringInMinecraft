@@ -31,7 +31,7 @@ COORDENADAS_COFRES = {
 
 PRIMERA_RANURA = 9
 RANURAS_INVENTARIO = range(PRIMERA_RANURA, PRIMERA_RANURA + TAMANO_INVENTARIO)
-DISTANCIA_COFRE = 2.5
+DISTANCIA_COFRE = 3.0  # el jugador alcanza a abrir cofres hasta ~4.5 bloques
 SEGUNDOS_MAXIMOS_CAMINATA = 30
 
 
@@ -87,8 +87,11 @@ class DepositoCofres:
         meta = pathfinder.goals.GoalNear(destino.x, destino.y, destino.z, 2)
         self.bot.pathfinder.setGoal(meta)
 
+        # Se mide hasta el centro del bloque del cofre, no hasta su esquina,
+        # para que la distancia coincida con lo que deja GoalNear (2 bloques).
+        centro = destino.offset(0.5, 0.5, 0.5)
         limite = time.time() + SEGUNDOS_MAXIMOS_CAMINATA
-        while self.bot.entity.position.distanceTo(destino) > DISTANCIA_COFRE:
+        while self.bot.entity.position.distanceTo(centro) > DISTANCIA_COFRE:
             if time.time() > limite:
                 raise TimeoutError(f"No pude llegar al cofre en {destino}")
             time.sleep(0.2)
@@ -160,9 +163,10 @@ class BotOrdenador:
 
             aceptada = False
             for paso in ejecutar_paso_a_paso(cadena):
-                print(f"[Paso {paso.numero:02d}] Estado: {paso.estado} | Cabezal cinta 1: {paso.posicion}")
+                print(f"[Paso {paso.numero:02d}] Estado: {paso.estado}")
+                print(paso.describir_cintas())
                 if paso.estado in ESTADO_A_COFRE:
-                    self._guardar_item(ESTADO_A_COFRE[paso.estado], items[paso.posicion])
+                    self._guardar_item(ESTADO_A_COFRE[paso.estado], items[paso.posicion], paso.posicion)
                 elif paso.estado == ESTADO_FINAL:
                     aceptada = True
                     break
@@ -171,11 +175,22 @@ class BotOrdenador:
                 print("\n=== Estado final q5 alcanzado: inventario clasificado ===")
                 self.bot.chat("Estado final q5 alcanzado. Inventario ordenado.")
             else:
+                print("\n=== La MNTM rechazó la cadena ===")
                 self.bot.chat("La MNTM rechazó la cadena.")
+        except Exception as error:
+            print(f"Error durante la clasificación: {error}")
+            self.bot.chat("Ocurrió un error durante la clasificación. Revisa la consola.")
         finally:
             self.ocupado = False
 
-    def _guardar_item(self, categoria, item):
+    def _guardar_item(self, categoria, item, posicion):
+        # El inventario se leyó al inicio: se comprueba que el objeto siga
+        # en su ranura antes de llevarlo al cofre.
+        actual = self.bot.inventory.slots[PRIMERA_RANURA + posicion]
+        if actual is None or str(actual.name) != str(item.name):
+            print(f"  -> {item.name} ya no está en su ranura; se omite")
+            return
+        item = actual
         try:
             self.cofres.depositar(categoria, item)
         except Exception as error:
