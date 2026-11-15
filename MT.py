@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Tuple
 
+from automata.base.exceptions import RejectionException
 from automata.tm.mntm import MNTM
 
 TAMANO_INVENTARIO = 36
@@ -21,44 +22,48 @@ class MaquinaClasificadora:
             tape_symbols={'b', 'e', 'o', 'd', 'm', 'E', 'O', 'D', 'M', '#'},
             n_tapes=5,
             transitions={
+                # Transiciones tomadas del diagrama MT_PROYECTO.png.
+                # '#' es el blanco (□) y 'N' es "no moverse" (S en JFLAP).
+                # En la cinta base, cada símbolo leído se borra con □:
+                # el objeto "sale" del inventario.
                 'q0': {
                     ('b', '#', '#', '#', '#'): [
-                        ('q0', (('b', 'R'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
+                        ('q0', (('#', 'R'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                     ('e', '#', '#', '#', '#'): [
-                        ('q1', (('e', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
+                        ('q1', (('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                     ('o', '#', '#', '#', '#'): [
-                        ('q2', (('o', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
+                        ('q2', (('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                     ('d', '#', '#', '#', '#'): [
-                        ('q3', (('d', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
+                        ('q3', (('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                     ('m', '#', '#', '#', '#'): [
-                        ('q4', (('m', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
+                        ('q4', (('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                     ('#', '#', '#', '#', '#'): [
                         ('q5', (('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                 },
                 'q1': {
-                    ('e', '#', '#', '#', '#'): [
-                        ('q0', (('e', 'R'), ('E', 'R'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
+                    ('#', '#', '#', '#', '#'): [
+                        ('q0', (('#', 'R'), ('E', 'R'), ('#', 'N'), ('#', 'N'), ('#', 'N')))
                     ],
                 },
                 'q2': {
-                    ('o', '#', '#', '#', '#'): [
-                        ('q0', (('o', 'R'), ('#', 'N'), ('O', 'R'), ('#', 'N'), ('#', 'N')))
+                    ('#', '#', '#', '#', '#'): [
+                        ('q0', (('#', 'R'), ('#', 'N'), ('O', 'R'), ('#', 'N'), ('#', 'N')))
                     ],
                 },
                 'q3': {
-                    ('d', '#', '#', '#', '#'): [
-                        ('q0', (('d', 'R'), ('#', 'N'), ('#', 'N'), ('D', 'R'), ('#', 'N')))
+                    ('#', '#', '#', '#', '#'): [
+                        ('q0', (('#', 'R'), ('#', 'N'), ('#', 'N'), ('D', 'R'), ('#', 'N')))
                     ],
                 },
                 'q4': {
-                    ('m', '#', '#', '#', '#'): [
-                        ('q0', (('m', 'R'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('M', 'R')))
+                    ('#', '#', '#', '#', '#'): [
+                        ('q0', (('#', 'R'), ('#', 'N'), ('#', 'N'), ('#', 'N'), ('M', 'R')))
                     ],
                 },
             },
@@ -68,20 +73,49 @@ class MaquinaClasificadora:
         )
 
 
+NOMBRES_CINTAS = ('Base', 'E', 'Comida', 'Bloques', 'M')
+
+
 @dataclass(frozen=True)
 class PasoMaquina:
     numero: int
     estado: str
-    posicion: int
+    posicion: int  # posición del cabezal en la cinta base
+    cintas: Tuple[str, ...] = ()  # contenido de cada cinta
+    cabezales: Tuple[int, ...] = ()  # posición del cabezal en cada cinta
+
+    def describir_cintas(self) -> str:
+        """Dibuja las cintas con □ como blanco y [ ] marcando el cabezal."""
+        lineas = []
+        for nombre, contenido, cabezal in zip(NOMBRES_CINTAS, self.cintas, self.cabezales):
+            celdas = [('□' if s == '#' else s) for s in contenido]
+            while len(celdas) <= cabezal:
+                celdas.append('□')
+            celdas[cabezal] = f'[{celdas[cabezal]}]'
+            lineas.append(f"    {nombre:<8}: {' '.join(celdas)}")
+        return '\n'.join(lineas)
 
 
 def ejecutar_paso_a_paso(cadena: str) -> Iterator[PasoMaquina]:
+    """Ejecuta la MNTM y entrega un PasoMaquina por cada configuración.
+
+    Si la máquina rechaza la cadena, el generador termina sin llegar a q5.
+    """
     mntm = MaquinaClasificadora().mntm
-    for numero, configuraciones in enumerate(mntm.read_input_stepwise(cadena)):
-        if not configuraciones:
-            return
-        config = next(iter(configuraciones))
-        yield PasoMaquina(numero, config.state, config.tapes[0].current_position)
+    try:
+        for numero, configuraciones in enumerate(mntm.read_input_stepwise(cadena)):
+            if not configuraciones:
+                return
+            config = next(iter(configuraciones))
+            yield PasoMaquina(
+                numero=numero,
+                estado=config.state,
+                posicion=config.tapes[0].current_position,
+                cintas=tuple(''.join(c.tape) for c in config.tapes),
+                cabezales=tuple(c.current_position for c in config.tapes),
+            )
+    except RejectionException:
+        return
 
 
 @dataclass(frozen=True)
@@ -159,7 +193,8 @@ if __name__ == '__main__':
 
     aceptada = False
     for paso in ejecutar_paso_a_paso(cadena):
-        print(f"[Paso {paso.numero:02d}] Estado: {paso.estado} | Cabezal cinta 1: {paso.posicion}")
+        print(f"[Paso {paso.numero:02d}] Estado: {paso.estado}")
+        print(paso.describir_cintas())
         aceptada = paso.estado == ESTADO_FINAL
 
     print(f"\nCadena {'aceptada' if aceptada else 'rechazada'}")
